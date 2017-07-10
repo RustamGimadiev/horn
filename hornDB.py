@@ -32,6 +32,8 @@ class Subscription(BaseModel):
 class Update(BaseModel):
 	message = TextField()
 	resource = ForeignKeyField(Resource)
+	class Meta:
+		primary_key = CompositeKey('resource')
 
 def init(db):
 	db.init(DATABASE)

@@ -7,22 +7,12 @@ from multiprocessing import Process, Queue
 
 import time
 import requests
-import re
 import hashlib
+import json
 import hornDB as db
 
 
-def Check(key, value):
-	return True
-
-def Notify(queue):
-	while True:
-		msg = queue.get()
-		channels = subscribesList.getChannels(msg[0])
-		for channel in channels: 
-			print "For channel %d: %s" %  (channel, msg[1])
 	
-
 def getYouTubeLatest(obj):
 	msg = u'Новое видео: https://www.youtube.com%s'
 	res = requests.get('https://www.youtube.com/%s/%s/videos' % (obj.type.name, obj.name))
@@ -34,9 +24,9 @@ def getYouTubeLatest(obj):
 
 def getInstagramLatest(obj):
 	msg = u'Новая публикация: https://www.instagram.com/p/%s'
-	res = requests.get('https://www.instagram.com/%s/' % obj.name)
-	p = re.compile('"code[": ]+([^"]*)', re.IGNORECASE)
-	latestId = p.search(res.text).groups()[0]
+	res = requests.get('https://www.instagram.com/%s/?__a=1' % obj.name)
+	text = json.loads(res.text)
+	latestId = text['user']['media']['nodes'][0]['code']
 	result = msg % latestId
 	return result
 
@@ -46,24 +36,32 @@ class Horn(Process):
 		super(Horn, self).__init__()
 
 	def run(self):
-		i = 0
 		YOUTUBE = db.ResourceSources.get(name='youtube')
 		INSTAGRAM = db.ResourceSources.get(name='instagram')
 		while True:
-			print '%d iteration of Horn' % i
-			i += 1
-			for r in db.Resource.select():
+			rows = list(db.Resource.select())
+			for r in rows:
 				if r.source == YOUTUBE:
 					m = getYouTubeLatest(r)
-	                	        if Check(r, m):
-						self.toNotify.put((r, m))
+	                	        self.check(r, m)
 				elif r.source == INSTAGRAM:
 					m = getInstagramLatest(r)
-					if Check(r, m):
-						self.toNotify.put((r, m))
+					self.check(r, m)
 				else:
 					print "Unknown source for object: %s" % str(obj.source)
-	
+
+	def check(self, resource, message):
+		updates = db.Update.select().where(db.Update.resource==resource)
+		if not len(updates):
+			update = db.Update.create(message=message, resource=resource)
+                        self.toNotify.put((update.message, update.resource))
+		else:
+			update = updates[0]
+		if update.message != message:
+			u = db.Update.update(message=message).where(db.Update.resource==resource)
+			u.execute()
+			self.toNotify.put((update.message, update.resource))
+
 	def getQueue(self):
 		return self.toNotify
 
@@ -71,8 +69,4 @@ if  __name__ == "__main__":
 	h = Horn()
 	h.daemon = True
 	h.start()
-	q = h.getQueue()
-	n = Process(target=Notify, args=(q,))
-	n.start()
-	n.join()
 	h.join()

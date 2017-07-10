@@ -3,15 +3,16 @@
 
 import logging
 import horn
+from multiprocessing import Process, Queue
 import hornDB as db
 from urlparse import urlparse
 from telegram import (ReplyKeyboardMarkup, ReplyKeyboardRemove, Bot)
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, RegexHandler,
                           ConversationHandler)
 
-logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
+logging.basicConfig(format='%(asctime)s [%(name)s][%(levelname)s] %(message)s',
                     level=logging.INFO)
-
+logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger('horn')
 
 class NotSupported(Exception):
@@ -82,10 +83,14 @@ def start(bot, update):
 def help(bot, update):
 	update.message.reply_text('help!',reply_markup=ReplyKeyboardRemove())
 	
-
-def main():
+def notifier(queue):
 	bot = Bot('346099461:AAFEvtDIZ9tHpBeHeJZdhuXNzAh1IxG_Vow')
-	bot.send_message('102455754', "Bot restarted")
+	while True:
+		msg = queue.get()
+		for s in db.Subscription.select().where(db.Subscription.resource==msg[1]):
+			bot.send_message(s.chat.cid, msg[0])
+
+def updater():
 	updater = Updater('346099461:AAFEvtDIZ9tHpBeHeJZdhuXNzAh1IxG_Vow')
 	dp = updater.dispatcher
 	conv_handler = ConversationHandler(
@@ -98,4 +103,16 @@ def main():
 	updater.idle()
 
 if __name__ == '__main__':
+	h = horn.Horn()
+        h.daemon = True
+        h.start()
+        q = h.getQueue()
+	u = Process(target=updater)
+        u.start()
+	n = Process(target=notifier, args=(q,))
+        n.start()
+        n.join()
+        u.join()
+	h.join()
+
 	main()
